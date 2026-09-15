@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: klmanga-proxy
+    env: node
+    region: oregon # または tokyo 等、お好みのリージョン
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_ENV
+        value: production
