@@ -53,4 +53,11 @@ app.get('*', async (req, res) => {
     
     const contentType = response.headers.get('Content-Type') || '';
     
-    // レ
+    // レスポンスヘッダーを設定
+    res.status(response.status);
+    response.headers.forEach((value, key) => {
+      res.setHeader(key, value);
+    });
+
+    // レスポンスボディを転送
+    response.body.pipe(res);
