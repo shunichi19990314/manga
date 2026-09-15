@@ -24,7 +24,7 @@ app.get('*', async (req, res) => {
     
     // Workersにアクセス
     const response = await fetch(targetUrl, {
-      method: 'GET',
+      method: req.method,
       headers: {
         'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
@@ -33,6 +33,9 @@ app.get('*', async (req, res) => {
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
         'Cache-Control': 'no-cache',
+        // Origin と Referer を動的に設定（重要：Workers がブラウザからのアクセスと認識するため）
+        'Origin': `${req.protocol}://${req.get('host')}`,
+        'Referer': `${req.protocol}://${req.get('host')}/`,
       },
       agent: httpsAgent,
     });
