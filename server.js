@@ -1,72 +1,85 @@
 const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
+const puppeteer = require('puppeteer');
+const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
 const TARGET_URL = 'https://klmanga.mba';
 
-// ブラウザのように見せかけるためのヘッダー
-const browserHeaders = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-  'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,image/apng,*/*;q=0.8',
-  'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-  'Accept-Encoding': 'gzip, deflate, br',
-  'Upgrade-Insecure-Requests': '1',
-  'Sec-Fetch-Dest': 'document',
-  'Sec-Fetch-Mode': 'navigate',
-  'Sec-Fetch-Site': 'none',
-  'Cache-Control': 'max-age=0'
-};
+// ブラウザのインスタンスをキャッシュ
+let browser = null;
 
-app.use('/', createProxyMiddleware({
-  target: TARGET_URL,
-  changeOrigin: true,
-  onProxyReq: function(proxyReq, req, res) {
-    // ブラウザのヘッダーを設定
-    Object.keys(browserHeaders).forEach(key => {
-      proxyReq.setHeader(key, browserHeaders[key]);
+async function getBrowser() {
+  if (!browser) {
+    browser = await puppeteer.launch({
+      headless: true,
+      args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-accelerated-2d-canvas',
+        '--disable-gpu',
+        '--window-size=1920,1080'
+      ]
+    });
+  }
+  return browser;
+}
+
+app.use(express.static('public'));
+
+app.get('*', async (req, res) => {
+  try {
+    const targetUrl = TARGET_URL + req.url;
+    const browser = await getBrowser();
+    const page = await browser.newPage();
+    
+    // ブラウザのふりをする
+    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
+    await page.setViewport({ width: 1920, height: 1080 });
+    
+    // リクエストヘッダーを設定
+    await page.setExtraHTTPHeaders({
+      'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
     });
     
-    // Hostヘッダーをターゲットのホストに設定
-    proxyReq.setHeader('Host', new URL(TARGET_URL).host);
+    // ページにアクセス
+    await page.goto(targetUrl, {
+      waitUntil: 'networkidle2',
+      timeout: 30000
+    });
     
-    // Refererを設定（オプション）
-    if (!proxyReq.getHeader('referer')) {
-      proxyReq.setHeader('referer', TARGET_URL);
-    }
-  },
-  onProxyRes: function (proxyRes, req, res) {
-    // CSPヘッダーを削除して表示を許可
-    delete proxyRes.headers['content-security-policy'];
-    delete proxyRes.headers['content-security-policy-report-only'];
-    delete proxyRes.headers['x-frame-options'];
-    delete proxyRes.headers['x-xss-protection'];
+    // ページのHTMLを取得
+    const html = await page.content();
     
-    // Set-Cookieヘッダーのドメインを修正
-    if (proxyRes.headers['set-cookie']) {
-      proxyRes.headers['set-cookie'] = proxyRes.headers['set-cookie'].map(cookie => {
-        return cookie.replace(/Domain=[^;]+/i, '')
-                    .replace(/Secure(?=;|$)/i, '')
-                    .replace(/SameSite=[^;]+/i, '');
-      });
-    }
+    // HTML内のリンクを相対パスから絶対パスに変換
+    const modifiedHtml = html.replace(
+      new RegExp(`href=["']${TARGET_URL}`, 'g'),
+      `href="${req.protocol}://${req.get('host')}`
+    ).replace(
+      new RegExp(`src=["']${TARGET_URL}`, 'g'),
+      `src="${req.protocol}://${req.get('host')}`
+    );
     
-    // Locationヘッダー（リダイレクト）を修正
-    if (proxyRes.headers['location']) {
-      const location = proxyRes.headers['location'];
-      if (location.startsWith('https://klmanga.mba')) {
-        proxyRes.headers['location'] = location.replace('https://klmanga.mba', '');
-      }
-    }
-  },
-  cookieDomainRewrite: {
-    '*': ''
-  },
-  followRedirects: true
-}));
+    await page.close();
+    res.send(modifiedHtml);
+    
+  } catch (error) {
+    console.error('Error:', error);
+    res.status(500).send(`Error: ${error.message}`);
+  }
+});
 
 app.listen(PORT, () => {
-  console.log(`Proxy server is running on port ${PORT}`);
-  console.log(`Target: ${TARGET_URL}`);
+  console.log(`Proxy server running on port ${PORT}`);
+});
+
+// グレースフルシャットダウン
+process.on('SIGINT', async () => {
+  if (browser) {
+    await browser.close();
+  }
+  process.exit(0);
 });
