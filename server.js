@@ -61,3 +61,14 @@ app.get('*', async (req, res) => {
 
     // レスポンスボディを転送
     response.body.pipe(res);
+
+  } catch (error) {
+    console.error('Error fetching from Workers:', error.message);
+    res.status(500).send(`<h1>500 Internal Server Error</h1><p>Error: ${error.message}</p>`);
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  console.log(`Proxying to: ${WORKERS_URL}`);
+});
