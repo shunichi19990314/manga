@@ -1,85 +1,50 @@
 const express = require('express');
-const puppeteer = require('puppeteer');
-const path = require('path');
+const fetch = require('node-fetch');
 
 const app = express();
 const PORT = process.env.PORT || 10000;
 
-const TARGET_URL = 'https://klmanga.mba';
-
-// ブラウザのインスタンスをキャッシュ
-let browser = null;
-
-async function getBrowser() {
-  if (!browser) {
-    browser = await puppeteer.launch({
-      headless: true,
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-accelerated-2d-canvas',
-        '--disable-gpu',
-        '--window-size=1920,1080'
-      ]
-    });
-  }
-  return browser;
-}
-
-app.use(express.static('public'));
+// Cloudflare WorkersのURL
+const WORKERS_URL = 'https://klmanga-proxy.shunichi-0314.workers.dev';
 
 app.get('*', async (req, res) => {
   try {
-    const targetUrl = TARGET_URL + req.url;
-    const browser = await getBrowser();
-    const page = await browser.newPage();
+    // Workersにリクエストを飛ばす
+    const targetUrl = `${WORKERS_URL}${req.url}`;
     
-    // ブラウザのふりをする
-    await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
-    await page.setViewport({ width: 1920, height: 1080 });
-    
-    // リクエストヘッダーを設定
-    await page.setExtraHTTPHeaders({
-      'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
-      'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8'
+    const response = await fetch(targetUrl, {
+      headers: {
+        'User-Agent': req.get('User-Agent') || 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
+      }
     });
+
+    const contentType = response.headers.get('Content-Type') || '';
     
-    // ページにアクセス
-    await page.goto(targetUrl, {
-      waitUntil: 'networkidle2',
-      timeout: 30000
-    });
-    
-    // ページのHTMLを取得
-    const html = await page.content();
-    
-    // HTML内のリンクを相対パスから絶対パスに変換
-    const modifiedHtml = html.replace(
-      new RegExp(`href=["']${TARGET_URL}`, 'g'),
-      `href="${req.protocol}://${req.get('host')}`
-    ).replace(
-      new RegExp(`src=["']${TARGET_URL}`, 'g'),
-      `src="${req.protocol}://${req.get('host')}`
-    );
-    
-    await page.close();
-    res.send(modifiedHtml);
-    
+    // HTMLの場合
+    if (contentType.includes('text/html')) {
+      const html = await response.text();
+      
+      // WorkersのURLを、Render自身のURLに書き換える
+      const renderOrigin = `${req.protocol}://${req.get('host')}`;
+      const modifiedHtml = html.replace(new RegExp(WORKERS_URL.replace('https://', ''), 'g'), renderOrigin);
+      
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      res.send(modifiedHtml);
+    } else {
+      // 画像やCSSなどはそのままストリームで返す
+      res.setHeader('Content-Type', contentType);
+      response.body.pipe(res);
+    }
+
   } catch (error) {
-    console.error('Error:', error);
+    console.error('Proxy Error:', error);
     res.status(500).send(`Error: ${error.message}`);
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`Proxy server running on port ${PORT}`);
-});
-
-// グレースフルシャットダウン
-process.on('SIGINT', async () => {
-  if (browser) {
-    await browser.close();
-  }
-  process.exit(0);
+  console.log(`Render proxy server running on port ${PORT}`);
+  console.log(`Target Workers: ${WORKERS_URL}`);
 });
