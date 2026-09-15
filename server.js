@@ -6,51 +6,67 @@ const app = express();
 const PORT = process.env.PORT || 10000;
 const WORKERS_URL = 'https://klmanga-proxy.shunichi-0314.workers.dev';
 
-// HTTPSエージェントの設定（SSL検証を緩和）
+// HTTPS エージェントの設定（SSL 検証を緩和）
 const httpsAgent = new https.Agent({
-  rejectUnauthorized: false
+  rejectUnauthorized: false,
+  keepAlive: true,
 });
 
 app.get('*', async (req, res) => {
   try {
     const targetUrl = `${WORKERS_URL}${req.url}`;
     
+    // クライアントから実際の Origin/Referer を取得、なければフォールバック
+    const clientHost = req.get('host') || 'localhost';
+    const clientProtocol = req.protocol || 'http';
+    const origin = req.get('Origin') || `${clientProtocol}://${clientHost}`;
+    const referer = req.get('Referer') || `${clientProtocol}://${clientHost}/`;
+    
     console.log(`Fetching from Workers: ${targetUrl}`);
     console.log(`Request headers:`, {
       'User-Agent': req.get('User-Agent'),
-      'Referer': req.get('Referer'),
-      'Origin': req.get('Origin')
+      'Referer': referer,
+      'Origin': origin
     });
     
-    // Workersにアクセス
+    // Workers にアクセス
     const response = await fetch(targetUrl, {
       method: req.method,
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8',
         'Accept-Language': 'ja-JP,ja;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
         'Connection': 'keep-alive',
         'Upgrade-Insecure-Requests': '1',
+        'Sec-Ch-Ua': '"Chromium";v="131", "Not_A Brand";v="24"',
+        'Sec-Ch-Ua-Mobile': '?0',
+        'Sec-Ch-Ua-Platform': '"Windows"',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
+        'Sec-Fetch-Site': 'cross-site',
         'Cache-Control': 'no-cache',
-        // Origin と Referer を動的に設定（重要：Workers がブラウザからのアクセスと認識するため）
-        'Origin': `${req.protocol}://${req.get('host')}`,
-        'Referer': `${req.protocol}://${req.get('host')}/`,
+        'Pragma': 'no-cache',
+        // Origin と Referer を設定
+        'Origin': origin,
+        'Referer': referer,
       },
       agent: httpsAgent,
+      redirect: 'follow',
     });
     
     console.log(`Workers response status: ${response.status}`);
     
     if (response.status === 403) {
       const errorBody = await response.text();
-      console.error('Workers returned 403:', errorBody);
+      console.error('Workers returned 403:', errorBody.substring(0, 500));
       return res.status(503).send(`
         <h1>503 Service Unavailable</h1>
         <p>Workers returned 403 Forbidden.</p>
-        <p><strong>Workersは直接アクセス可能です:</strong></p>
+        <p><strong>Workers は直接アクセス可能です:</strong></p>
         <p><a href="${WORKERS_URL}${req.url}" target="_blank">${WORKERS_URL}${req.url}</a></p>
-        <p>WorkersのコードでCORS設定を確認してください。</p>
+        <p>Cloudflare のセキュリティブロックを受けています。</p>
+        <p>Ray ID: 確認するには Workers のログを確認してください。</p>
       `);
     }
     
